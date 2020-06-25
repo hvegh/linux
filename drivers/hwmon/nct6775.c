@@ -28,7 +28,7 @@
  * nct6792d    15      6       6       2+6    0xc910 0xc1    0x5ca3
  * nct6793d    15      6       6       2+6    0xd120 0xc1    0x5ca3
  * nct6795d    14      6       6       2+6    0xd350 0xc1    0x5ca3
- * nct6796d    14      7       7       2+6    0xd420 0xc1    0x5ca3
+ * nct6796d    16      7       7       2+6    0xd420 0xc1    0x5ca3
  * nct6797d    14      7       7       2+6    0xd450 0xc1    0x5ca3
  *                                           (0xd451)
  * nct6798d    14      7       7       2+6    0xd428 0xc1    0x5ca3
@@ -1047,9 +1047,9 @@ div_from_reg(u8 reg)
  * Some of the voltage inputs have internal scaling, the tables below
  * contain 8 (the ADC LSB in mV) * scaling factor * 100
  */
-static const u16 scale_in[15] = {
+static const u16 scale_in[16] = {
 	800, 800, 1600, 1600, 800, 800, 800, 1600, 1600, 800, 800, 800, 800,
-	800, 800
+	800, 800, 800
 };
 
 static inline long in_from_reg(u8 reg, u8 nr)
@@ -1143,7 +1143,7 @@ struct nct6775_data {
 	/* Register values */
 	u8 bank;		/* current register bank */
 	u8 in_num;		/* number of in inputs we have */
-	u8 in[15][3];		/* [0]=in, [1]=in_max, [2]=in_min */
+	u8 in[16][3];		/* [0]=in, [1]=in_max, [2]=in_min */
 	unsigned int rpm[NUM_FAN];
 	u16 fan_min[NUM_FAN];
 	u8 fan_pulses[NUM_FAN];
@@ -4200,7 +4200,7 @@ static int nct6775_probe(struct platform_device *pdev)
 	case nct6796:
 	case nct6797:
 	case nct6798:
-		data->in_num = 15;
+		data->in_num = (data->kind == nct6796) ? 16 : 15;
 		data->pwm_num = (data->kind == nct6796 ||
 				 data->kind == nct6797 ||
 				 data->kind == nct6798) ? 7 : 6;
