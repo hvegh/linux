@@ -8,6 +8,7 @@
 
 #include <drm/drm_drv.h>
 
+#include "display/intel_crtc.h"
 #include "display/intel_display_types.h"
 #include "gt/intel_engine.h"
 
@@ -474,6 +475,44 @@ TRACE_EVENT(intel_pipe_update_end,
 		      __entry->scanline)
 );
 
+/* frontbuffer tracking */
+
+TRACE_EVENT(intel_frontbuffer_invalidate,
+	    TP_PROTO(unsigned int frontbuffer_bits, unsigned int origin),
+	    TP_ARGS(frontbuffer_bits, origin),
+
+	    TP_STRUCT__entry(
+			     __field(unsigned int, frontbuffer_bits)
+			     __field(unsigned int, origin)
+			     ),
+
+	    TP_fast_assign(
+			   __entry->frontbuffer_bits = frontbuffer_bits;
+			   __entry->origin = origin;
+			   ),
+
+	    TP_printk("frontbuffer_bits=0x%08x, origin=%u",
+		      __entry->frontbuffer_bits, __entry->origin)
+);
+
+TRACE_EVENT(intel_frontbuffer_flush,
+	    TP_PROTO(unsigned int frontbuffer_bits, unsigned int origin),
+	    TP_ARGS(frontbuffer_bits, origin),
+
+	    TP_STRUCT__entry(
+			     __field(unsigned int, frontbuffer_bits)
+			     __field(unsigned int, origin)
+			     ),
+
+	    TP_fast_assign(
+			   __entry->frontbuffer_bits = frontbuffer_bits;
+			   __entry->origin = origin;
+			   ),
+
+	    TP_printk("frontbuffer_bits=0x%08x, origin=%u",
+		      __entry->frontbuffer_bits, __entry->origin)
+);
+
 /* object tracking */
 
 TRACE_EVENT(i915_gem_object_create,
@@ -735,7 +774,7 @@ TRACE_EVENT(i915_request_queue,
 			     ),
 
 	    TP_fast_assign(
-			   __entry->dev = rq->i915->drm.primary->index;
+			   __entry->dev = rq->engine->i915->drm.primary->index;
 			   __entry->class = rq->engine->uabi_class;
 			   __entry->instance = rq->engine->uabi_instance;
 			   __entry->ctx = rq->fence.context;
@@ -761,7 +800,7 @@ DECLARE_EVENT_CLASS(i915_request,
 			     ),
 
 	    TP_fast_assign(
-			   __entry->dev = rq->i915->drm.primary->index;
+			   __entry->dev = rq->engine->i915->drm.primary->index;
 			   __entry->class = rq->engine->uabi_class;
 			   __entry->instance = rq->engine->uabi_instance;
 			   __entry->ctx = rq->fence.context;
@@ -804,7 +843,7 @@ TRACE_EVENT(i915_request_in,
 			    ),
 
 	    TP_fast_assign(
-			   __entry->dev = rq->i915->drm.primary->index;
+			   __entry->dev = rq->engine->i915->drm.primary->index;
 			   __entry->class = rq->engine->uabi_class;
 			   __entry->instance = rq->engine->uabi_instance;
 			   __entry->ctx = rq->fence.context;
@@ -833,7 +872,7 @@ TRACE_EVENT(i915_request_out,
 			    ),
 
 	    TP_fast_assign(
-			   __entry->dev = rq->i915->drm.primary->index;
+			   __entry->dev = rq->engine->i915->drm.primary->index;
 			   __entry->class = rq->engine->uabi_class;
 			   __entry->instance = rq->engine->uabi_instance;
 			   __entry->ctx = rq->fence.context;
@@ -895,7 +934,7 @@ TRACE_EVENT(i915_request_wait_begin,
 	     * less desirable.
 	     */
 	    TP_fast_assign(
-			   __entry->dev = rq->i915->drm.primary->index;
+			   __entry->dev = rq->engine->i915->drm.primary->index;
 			   __entry->class = rq->engine->uabi_class;
 			   __entry->instance = rq->engine->uabi_instance;
 			   __entry->ctx = rq->fence.context;

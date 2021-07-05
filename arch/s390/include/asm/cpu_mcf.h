@@ -92,9 +92,8 @@ struct cpu_cf_events {
 	struct cpumf_ctr_info	info;
 	atomic_t		ctr_set[CPUMF_CTR_SET_MAX];
 	atomic64_t		alert;
-	u64			state, tx_state;
+	u64			state;
 	unsigned int		flags;
-	unsigned int		txn_flags;
 };
 DECLARE_PER_CPU(struct cpu_cf_events, cpu_cf_events);
 
@@ -123,4 +122,6 @@ static inline int stccm_avail(void)
 	return test_facility(142);
 }
 
+size_t cpum_cf_ctrset_size(enum cpumf_ctr_set ctrset,
+			   struct cpumf_ctr_info *info);
 #endif /* _ASM_S390_CPU_MCF_H */

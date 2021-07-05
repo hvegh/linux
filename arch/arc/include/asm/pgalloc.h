@@ -18,10 +18,10 @@
  * vineetg: April 2010
  *  -Switched pgtable_t from being struct page * to unsigned long
  *      =Needed so that Page Table allocator (pte_alloc_one) is not forced to
- *       to deal with struct page. Thay way in future we can make it allocate
+ *       deal with struct page. That way in future we can make it allocate
  *       multiple PG Tbls in one Page Frame
  *      =sweet side effect is avoiding calls to ugly page_address( ) from the
- *       pg-tlb allocator sub-sys (pte_alloc_one, ptr_free, pmd_populate
+ *       pg-tlb allocator sub-sys (pte_alloc_one, ptr_free, pmd_populate)
  *
  *  Amit Bhor, Sameer Dhavale: Codito Technologies 2004
  */
@@ -128,7 +128,5 @@ static inline void pte_free(struct mm_struct *mm, pgtable_t ptep)
 }
 
 #define __pte_free_tlb(tlb, pte, addr)  pte_free((tlb)->mm, pte)
-
-#define pmd_pgtable(pmd)	((pgtable_t) pmd_page_vaddr(pmd))
 
 #endif /* _ASM_ARC_PGALLOC_H */

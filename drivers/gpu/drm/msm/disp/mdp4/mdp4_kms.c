@@ -88,8 +88,6 @@ static int mdp4_hw_init(struct msm_kms *kms)
 	if (mdp4_kms->rev > 1)
 		mdp4_write(mdp4_kms, REG_MDP4_RESET_STATUS, 1);
 
-	dev->mode_config.allow_fb_modifiers = true;
-
 out:
 	pm_runtime_put_sync(dev->dev);
 
@@ -165,7 +163,7 @@ static void mdp4_destroy(struct msm_kms *kms)
 
 	if (mdp4_kms->blank_cursor_iova)
 		msm_gem_unpin_iova(mdp4_kms->blank_cursor_bo, kms->aspace);
-	drm_gem_object_put_unlocked(mdp4_kms->blank_cursor_bo);
+	drm_gem_object_put(mdp4_kms->blank_cursor_bo);
 
 	if (aspace) {
 		aspace->mmu->funcs->detach(aspace->mmu);
@@ -174,6 +172,8 @@ static void mdp4_destroy(struct msm_kms *kms)
 
 	if (mdp4_kms->rpm_enabled)
 		pm_runtime_disable(dev);
+
+	mdp_kms_destroy(&mdp4_kms->base);
 
 	kfree(mdp4_kms);
 }
@@ -427,7 +427,11 @@ struct msm_kms *mdp4_kms_init(struct drm_device *dev)
 		goto fail;
 	}
 
-	mdp_kms_init(&mdp4_kms->base, &kms_funcs);
+	ret = mdp_kms_init(&mdp4_kms->base, &kms_funcs);
+	if (ret) {
+		DRM_DEV_ERROR(dev->dev, "failed to init kms\n");
+		goto fail;
+	}
 
 	kms = &mdp4_kms->base.base;
 
@@ -514,7 +518,7 @@ struct msm_kms *mdp4_kms_init(struct drm_device *dev)
 			config->iommu);
 
 		aspace  = msm_gem_address_space_create(mmu,
-			"mdp4", 0x1000, 0xffffffff);
+			"mdp4", 0x1000, 0x100000000 - 0x1000);
 
 		if (IS_ERR(aspace)) {
 			if (!IS_ERR(mmu))

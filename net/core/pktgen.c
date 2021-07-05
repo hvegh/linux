@@ -467,7 +467,7 @@ static struct pktgen_dev *pktgen_find_dev(struct pktgen_thread *t,
 static int pktgen_device_event(struct notifier_block *, unsigned long, void *);
 static void pktgen_run_all_threads(struct pktgen_net *pn);
 static void pktgen_reset_all_threads(struct pktgen_net *pn);
-static void pktgen_stop_all_threads_ifs(struct pktgen_net *pn);
+static void pktgen_stop_all_threads(struct pktgen_net *pn);
 
 static void pktgen_stop(struct pktgen_thread *t);
 static void pktgen_clear_counters(struct pktgen_dev *pkt_dev);
@@ -516,14 +516,11 @@ static ssize_t pgctrl_write(struct file *file, const char __user *buf,
 	data[count - 1] = 0;	/* Strip trailing '\n' and terminate string */
 
 	if (!strcmp(data, "stop"))
-		pktgen_stop_all_threads_ifs(pn);
-
+		pktgen_stop_all_threads(pn);
 	else if (!strcmp(data, "start"))
 		pktgen_run_all_threads(pn);
-
 	else if (!strcmp(data, "reset"))
 		pktgen_reset_all_threads(pn);
-
 	else
 		return -EINVAL;
 
@@ -922,7 +919,7 @@ static ssize_t pktgen_if_write(struct file *file,
 			pkt_dev->min_pkt_size = value;
 			pkt_dev->cur_pkt_size = value;
 		}
-		sprintf(pg_result, "OK: min_pkt_size=%u",
+		sprintf(pg_result, "OK: min_pkt_size=%d",
 			pkt_dev->min_pkt_size);
 		return count;
 	}
@@ -939,7 +936,7 @@ static ssize_t pktgen_if_write(struct file *file,
 			pkt_dev->max_pkt_size = value;
 			pkt_dev->cur_pkt_size = value;
 		}
-		sprintf(pg_result, "OK: max_pkt_size=%u",
+		sprintf(pg_result, "OK: max_pkt_size=%d",
 			pkt_dev->max_pkt_size);
 		return count;
 	}
@@ -959,7 +956,7 @@ static ssize_t pktgen_if_write(struct file *file,
 			pkt_dev->max_pkt_size = value;
 			pkt_dev->cur_pkt_size = value;
 		}
-		sprintf(pg_result, "OK: pkt_size=%u", pkt_dev->min_pkt_size);
+		sprintf(pg_result, "OK: pkt_size=%d", pkt_dev->min_pkt_size);
 		return count;
 	}
 
@@ -981,7 +978,7 @@ static ssize_t pktgen_if_write(struct file *file,
 
 		i += len;
 		pkt_dev->nfrags = value;
-		sprintf(pg_result, "OK: frags=%u", pkt_dev->nfrags);
+		sprintf(pg_result, "OK: frags=%d", pkt_dev->nfrags);
 		return count;
 	}
 	if (!strcmp(name, "delay")) {
@@ -1146,7 +1143,7 @@ static ssize_t pktgen_if_write(struct file *file,
 		     (!(pkt_dev->odev->priv_flags & IFF_TX_SKB_SHARING)))))
 			return -ENOTSUPP;
 		pkt_dev->burst = value < 1 ? 1 : value;
-		sprintf(pg_result, "OK: burst=%d", pkt_dev->burst);
+		sprintf(pg_result, "OK: burst=%u", pkt_dev->burst);
 		return count;
 	}
 	if (!strcmp(name, "node")) {
@@ -3027,18 +3024,23 @@ static void pktgen_run(struct pktgen_thread *t)
 		t->control &= ~(T_STOP);
 }
 
-static void pktgen_stop_all_threads_ifs(struct pktgen_net *pn)
+static void pktgen_handle_all_threads(struct pktgen_net *pn, u32 flags)
 {
 	struct pktgen_thread *t;
-
-	func_enter();
 
 	mutex_lock(&pktgen_thread_lock);
 
 	list_for_each_entry(t, &pn->pktgen_threads, th_list)
-		t->control |= T_STOP;
+		t->control |= (flags);
 
 	mutex_unlock(&pktgen_thread_lock);
+}
+
+static void pktgen_stop_all_threads(struct pktgen_net *pn)
+{
+	func_enter();
+
+	pktgen_handle_all_threads(pn, T_STOP);
 }
 
 static int thread_is_running(const struct pktgen_thread *t)
@@ -3103,16 +3105,9 @@ static int pktgen_wait_all_threads_run(struct pktgen_net *pn)
 
 static void pktgen_run_all_threads(struct pktgen_net *pn)
 {
-	struct pktgen_thread *t;
-
 	func_enter();
 
-	mutex_lock(&pktgen_thread_lock);
-
-	list_for_each_entry(t, &pn->pktgen_threads, th_list)
-		t->control |= (T_RUN);
-
-	mutex_unlock(&pktgen_thread_lock);
+	pktgen_handle_all_threads(pn, T_RUN);
 
 	/* Propagate thread->control  */
 	schedule_timeout_interruptible(msecs_to_jiffies(125));
@@ -3122,16 +3117,9 @@ static void pktgen_run_all_threads(struct pktgen_net *pn)
 
 static void pktgen_reset_all_threads(struct pktgen_net *pn)
 {
-	struct pktgen_thread *t;
-
 	func_enter();
 
-	mutex_lock(&pktgen_thread_lock);
-
-	list_for_each_entry(t, &pn->pktgen_threads, th_list)
-		t->control |= (T_REMDEVALL);
-
-	mutex_unlock(&pktgen_thread_lock);
+	pktgen_handle_all_threads(pn, T_REMDEVALL);
 
 	/* Propagate thread->control  */
 	schedule_timeout_interruptible(msecs_to_jiffies(125));
@@ -3430,7 +3418,7 @@ xmit_more:
 		net_info_ratelimited("%s xmit error: %d\n",
 				     pkt_dev->odevname, ret);
 		pkt_dev->errors++;
-		/* fall through */
+		fallthrough;
 	case NETDEV_TX_BUSY:
 		/* Retry it next time */
 		refcount_dec(&(pkt_dev->skb->users));
@@ -3464,7 +3452,7 @@ static int pktgen_thread_worker(void *arg)
 	struct pktgen_dev *pkt_dev = NULL;
 	int cpu = t->cpu;
 
-	BUG_ON(smp_processor_id() != cpu);
+	WARN_ON(smp_processor_id() != cpu);
 
 	init_waitqueue_head(&t->queue);
 	complete(&t->start_done);
@@ -3699,7 +3687,7 @@ static int __net_init pktgen_create_thread(int cpu, struct pktgen_net *pn)
 				   cpu_to_node(cpu),
 				   "kpktgend_%d", cpu);
 	if (IS_ERR(p)) {
-		pr_err("kernel_thread() failed for cpu %d\n", t->cpu);
+		pr_err("kthread_create_on_node() failed for cpu %d\n", t->cpu);
 		list_del(&t->th_list);
 		kfree(t);
 		return PTR_ERR(p);

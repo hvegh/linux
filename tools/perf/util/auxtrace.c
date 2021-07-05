@@ -62,9 +62,7 @@
  * Make a group from 'leader' to 'last', requiring that the events were not
  * already grouped to a different leader.
  */
-static int perf_evlist__regroup(struct evlist *evlist,
-				struct evsel *leader,
-				struct evsel *last)
+static int evlist__regroup(struct evlist *evlist, struct evsel *leader, struct evsel *last)
 {
 	struct evsel *evsel;
 	bool grp;
@@ -300,10 +298,6 @@ static int auxtrace_queues__queue_buffer(struct auxtrace_queues *queues,
 		queue->set = true;
 		queue->tid = buffer->tid;
 		queue->cpu = buffer->cpu;
-	} else if (buffer->cpu != queue->cpu || buffer->tid != queue->tid) {
-		pr_err("auxtrace queue conflict: cpu %d, tid %d vs cpu %d, tid %d\n",
-		       queue->cpu, queue->tid, buffer->cpu, buffer->tid);
-		return -EINVAL;
 	}
 
 	buffer->buffer_nr = queues->next_buffer_nr++;
@@ -640,7 +634,7 @@ int auxtrace_parse_snapshot_options(struct auxtrace_record *itr,
 		break;
 	}
 
-	if (itr)
+	if (itr && itr->parse_snapshot_options)
 		return itr->parse_snapshot_options(itr, opts, str);
 
 	pr_err("No AUX area tracing to snapshot\n");
@@ -658,8 +652,7 @@ int auxtrace_record__read_finish(struct auxtrace_record *itr, int idx)
 		if (evsel->core.attr.type == itr->pmu->type) {
 			if (evsel->disabled)
 				return 0;
-			return perf_evlist__enable_event_idx(itr->evlist, evsel,
-							     idx);
+			return evlist__enable_event_idx(itr->evlist, evsel, idx);
 		}
 	}
 	return -EINVAL;
@@ -776,7 +769,7 @@ no_opt:
 			evsel->core.attr.aux_sample_size = term->val.aux_sample_size;
 			/* If possible, group with the AUX event */
 			if (aux_evsel && evsel->core.attr.aux_sample_size)
-				perf_evlist__regroup(evlist, aux_evsel, evsel);
+				evlist__regroup(evlist, aux_evsel, evsel);
 		}
 	}
 
@@ -789,6 +782,21 @@ no_opt:
 	}
 
 	return auxtrace_validate_aux_sample_size(evlist, opts);
+}
+
+void auxtrace_regroup_aux_output(struct evlist *evlist)
+{
+	struct evsel *evsel, *aux_evsel = NULL;
+	struct evsel_config_term *term;
+
+	evlist__for_each_entry(evlist, evsel) {
+		if (evsel__is_aux_event(evsel))
+			aux_evsel = evsel;
+		term = evsel__get_config_term(evsel, AUX_OUTPUT);
+		/* If possible, group with the AUX event */
+		if (term && aux_evsel)
+			evlist__regroup(evlist, aux_evsel, evsel);
+	}
 }
 
 struct auxtrace_record *__weak
@@ -1017,7 +1025,7 @@ struct auxtrace_queue *auxtrace_queues__sample_queue(struct auxtrace_queues *que
 	if (!id)
 		return NULL;
 
-	sid = perf_evlist__id2sid(session->evlist, id);
+	sid = evlist__id2sid(session->evlist, id);
 	if (!sid)
 		return NULL;
 
@@ -1047,7 +1055,7 @@ int auxtrace_queues__add_sample(struct auxtrace_queues *queues,
 	if (!id)
 		return -EINVAL;
 
-	sid = perf_evlist__id2sid(session->evlist, id);
+	sid = evlist__id2sid(session->evlist, id);
 	if (!sid)
 		return -ENOENT;
 
@@ -1082,7 +1090,7 @@ static int auxtrace_queue_data_cb(struct perf_session *session,
 	if (!qd->samples || event->header.type != PERF_RECORD_SAMPLE)
 		return 0;
 
-	err = perf_evlist__parse_sample(session->evlist, event, &sample);
+	err = evlist__parse_sample(session->evlist, event, &sample);
 	if (err)
 		return err;
 
@@ -1112,8 +1120,9 @@ int auxtrace_queue_data(struct perf_session *session, bool samples, bool events)
 					 auxtrace_queue_data_cb, &qd);
 }
 
-void *auxtrace_buffer__get_data(struct auxtrace_buffer *buffer, int fd)
+void *auxtrace_buffer__get_data_rw(struct auxtrace_buffer *buffer, int fd, bool rw)
 {
+	int prot = rw ? PROT_READ | PROT_WRITE : PROT_READ;
 	size_t adj = buffer->data_offset & (page_size - 1);
 	size_t size = buffer->size + adj;
 	off_t file_offset = buffer->data_offset - adj;
@@ -1122,7 +1131,7 @@ void *auxtrace_buffer__get_data(struct auxtrace_buffer *buffer, int fd)
 	if (buffer->data)
 		return buffer->data;
 
-	addr = mmap(NULL, size, PROT_READ, MAP_SHARED, fd, file_offset);
+	addr = mmap(NULL, size, prot, MAP_SHARED, fd, file_offset);
 	if (addr == MAP_FAILED)
 		return NULL;
 
@@ -1333,6 +1342,7 @@ void itrace_synth_opts__set_default(struct itrace_synth_opts *synth_opts,
 	synth_opts->flc = true;
 	synth_opts->llc = true;
 	synth_opts->tlb = true;
+	synth_opts->mem = true;
 	synth_opts->remote_access = true;
 
 	if (no_sample) {
@@ -1349,15 +1359,55 @@ void itrace_synth_opts__set_default(struct itrace_synth_opts *synth_opts,
 	synth_opts->initial_skip = 0;
 }
 
+static int get_flag(const char **ptr, unsigned int *flags)
+{
+	while (1) {
+		char c = **ptr;
+
+		if (c >= 'a' && c <= 'z') {
+			*flags |= 1 << (c - 'a');
+			++*ptr;
+			return 0;
+		} else if (c == ' ') {
+			++*ptr;
+			continue;
+		} else {
+			return -1;
+		}
+	}
+}
+
+static int get_flags(const char **ptr, unsigned int *plus_flags, unsigned int *minus_flags)
+{
+	while (1) {
+		switch (**ptr) {
+		case '+':
+			++*ptr;
+			if (get_flag(ptr, plus_flags))
+				return -1;
+			break;
+		case '-':
+			++*ptr;
+			if (get_flag(ptr, minus_flags))
+				return -1;
+			break;
+		case ' ':
+			++*ptr;
+			break;
+		default:
+			return 0;
+		}
+	}
+}
+
 /*
  * Please check tools/perf/Documentation/perf-script.txt for information
  * about the options parsed here, which is introduced after this cset,
  * when support in 'perf script' for these options is introduced.
  */
-int itrace_parse_synth_opts(const struct option *opt, const char *str,
-			    int unset)
+int itrace_do_parse_synth_opts(struct itrace_synth_opts *synth_opts,
+			       const char *str, int unset)
 {
-	struct itrace_synth_opts *synth_opts = opt->value;
 	const char *p;
 	char *endptr;
 	bool period_type_set = false;
@@ -1436,9 +1486,15 @@ int itrace_parse_synth_opts(const struct option *opt, const char *str,
 			break;
 		case 'e':
 			synth_opts->errors = true;
+			if (get_flags(&p, &synth_opts->error_plus_flags,
+				      &synth_opts->error_minus_flags))
+				goto out_err;
 			break;
 		case 'd':
 			synth_opts->log = true;
+			if (get_flags(&p, &synth_opts->log_plus_flags,
+				      &synth_opts->log_minus_flags))
+				goto out_err;
 			break;
 		case 'c':
 			synth_opts->branches = true;
@@ -1507,6 +1563,15 @@ int itrace_parse_synth_opts(const struct option *opt, const char *str,
 		case 'a':
 			synth_opts->remote_access = true;
 			break;
+		case 'M':
+			synth_opts->mem = true;
+			break;
+		case 'q':
+			synth_opts->quick += 1;
+			break;
+		case 'Z':
+			synth_opts->timeless_decoding = true;
+			break;
 		case ' ':
 		case ',':
 			break;
@@ -1528,6 +1593,11 @@ out:
 out_err:
 	pr_err("Bad Instruction Tracing options '%s'\n", str);
 	return -EINVAL;
+}
+
+int itrace_parse_synth_opts(const struct option *opt, const char *str, int unset)
+{
+	return itrace_do_parse_synth_opts(opt->value, str, unset);
 }
 
 static const char * const auxtrace_error_type_name[] = {

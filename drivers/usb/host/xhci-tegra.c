@@ -623,6 +623,13 @@ static void tegra_xusb_mbox_handle(struct tegra_xusb *tegra,
 								     enable);
 			if (err < 0)
 				break;
+
+			/*
+			 * wait 500us for LFPS detector to be disabled before
+			 * sending ACK
+			 */
+			if (!enable)
+				usleep_range(500, 1000);
 		}
 
 		if (err < 0) {
@@ -856,7 +863,7 @@ static int tegra_xusb_init_context(struct tegra_xusb *tegra)
 	if (!tegra->context.ipfs)
 		return -ENOMEM;
 
-	tegra->context.fpci = devm_kcalloc(tegra->dev, soc->ipfs.num_offsets,
+	tegra->context.fpci = devm_kcalloc(tegra->dev, soc->fpci.num_offsets,
 					   sizeof(u32), GFP_KERNEL);
 	if (!tegra->context.fpci)
 		return -ENOMEM;
@@ -910,7 +917,6 @@ static int tegra_xusb_load_firmware(struct tegra_xusb *tegra)
 	struct xhci_op_regs __iomem *op;
 	unsigned long timeout;
 	time64_t timestamp;
-	struct tm time;
 	u64 address;
 	u32 value;
 	int err;
@@ -1007,11 +1013,8 @@ static int tegra_xusb_load_firmware(struct tegra_xusb *tegra)
 	}
 
 	timestamp = le32_to_cpu(header->fwimg_created_time);
-	time64_to_tm(timestamp, 0, &time);
 
-	dev_info(dev, "Firmware timestamp: %ld-%02d-%02d %02d:%02d:%02d UTC\n",
-		 time.tm_year + 1900, time.tm_mon + 1, time.tm_mday,
-		 time.tm_hour, time.tm_min, time.tm_sec);
+	dev_info(dev, "Firmware timestamp: %ptTs UTC\n", &timestamp);
 
 	return 0;
 }
@@ -1136,7 +1139,7 @@ static struct phy *tegra_xusb_get_phy(struct tegra_xusb *tegra, char *name,
 	unsigned int i, phy_count = 0;
 
 	for (i = 0; i < tegra->soc->num_types; i++) {
-		if (!strncmp(tegra->soc->phy_types[i].name, "usb2",
+		if (!strncmp(tegra->soc->phy_types[i].name, name,
 							    strlen(name)))
 			return tegra->phys[phy_count+port];
 
@@ -1258,6 +1261,8 @@ static int tegra_xusb_init_usb_phy(struct tegra_xusb *tegra)
 
 	INIT_WORK(&tegra->id_work, tegra_xhci_id_work);
 	tegra->id_nb.notifier_call = tegra_xhci_id_notify;
+	tegra->otg_usb2_port = -EINVAL;
+	tegra->otg_usb3_port = -EINVAL;
 
 	for (i = 0; i < tegra->num_usb_phys; i++) {
 		struct phy *phy = tegra_xusb_get_phy(tegra, "usb2", i);
@@ -1853,11 +1858,7 @@ static const char * const tegra124_supply_names[] = {
 	"avddio-pex",
 	"dvddio-pex",
 	"avdd-usb",
-	"avdd-pll-utmip",
-	"avdd-pll-erefe",
-	"avdd-usb-ss-pll",
 	"hvdd-usb-ss",
-	"hvdd-usb-ss-pll-e",
 };
 
 static const struct tegra_xusb_phy_type tegra124_phy_types[] = {
@@ -1867,7 +1868,6 @@ static const struct tegra_xusb_phy_type tegra124_phy_types[] = {
 };
 
 static const unsigned int tegra124_xusb_context_ipfs[] = {
-	IPFS_XUSB_HOST_MSI_BAR_SZ_0,
 	IPFS_XUSB_HOST_MSI_BAR_SZ_0,
 	IPFS_XUSB_HOST_MSI_AXI_BAR_ST_0,
 	IPFS_XUSB_HOST_MSI_FPCI_BAR_ST_0,
@@ -1931,10 +1931,6 @@ static const char * const tegra210_supply_names[] = {
 	"dvddio-pex",
 	"hvddio-pex",
 	"avdd-usb",
-	"avdd-pll-utmip",
-	"avdd-pll-uerefe",
-	"dvdd-pex-pll",
-	"hvdd-pex-pll-e",
 };
 
 static const struct tegra_xusb_phy_type tegra210_phy_types[] = {

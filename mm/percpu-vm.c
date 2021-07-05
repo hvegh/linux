@@ -8,6 +8,7 @@
  * Chunks are mapped into vmalloc areas and populated page by page.
  * This is the default chunk allocator.
  */
+#include "internal.h"
 
 static struct page *pcpu_chunk_page(struct pcpu_chunk *chunk,
 				    unsigned int cpu, int page_idx)
@@ -133,7 +134,7 @@ static void pcpu_pre_unmap_flush(struct pcpu_chunk *chunk,
 
 static void __pcpu_unmap_pages(unsigned long addr, int nr_pages)
 {
-	unmap_kernel_range_noflush(addr, nr_pages << PAGE_SHIFT);
+	vunmap_range_noflush(addr, addr + (nr_pages << PAGE_SHIFT));
 }
 
 /**
@@ -192,8 +193,8 @@ static void pcpu_post_unmap_tlb_flush(struct pcpu_chunk *chunk,
 static int __pcpu_map_pages(unsigned long addr, struct page **pages,
 			    int nr_pages)
 {
-	return map_kernel_range_noflush(addr, nr_pages << PAGE_SHIFT,
-					PAGE_KERNEL, pages);
+	return vmap_pages_range_noflush(addr, addr + (nr_pages << PAGE_SHIFT),
+					PAGE_KERNEL, pages, PAGE_SHIFT);
 }
 
 /**
@@ -375,4 +376,34 @@ static int __init pcpu_verify_alloc_info(const struct pcpu_alloc_info *ai)
 {
 	/* no extra restriction */
 	return 0;
+}
+
+/**
+ * pcpu_should_reclaim_chunk - determine if a chunk should go into reclaim
+ * @chunk: chunk of interest
+ *
+ * This is the entry point for percpu reclaim.  If a chunk qualifies, it is then
+ * isolated and managed in separate lists at the back of pcpu_slot: sidelined
+ * and to_depopulate respectively.  The to_depopulate list holds chunks slated
+ * for depopulation.  They no longer contribute to pcpu_nr_empty_pop_pages once
+ * they are on this list.  Once depopulated, they are moved onto the sidelined
+ * list which enables them to be pulled back in for allocation if no other chunk
+ * can suffice the allocation.
+ */
+static bool pcpu_should_reclaim_chunk(struct pcpu_chunk *chunk)
+{
+	/* do not reclaim either the first chunk or reserved chunk */
+	if (chunk == pcpu_first_chunk || chunk == pcpu_reserved_chunk)
+		return false;
+
+	/*
+	 * If it is isolated, it may be on the sidelined list so move it back to
+	 * the to_depopulate list.  If we hit at least 1/4 pages empty pages AND
+	 * there is no system-wide shortage of empty pages aside from this
+	 * chunk, move it to the to_depopulate list.
+	 */
+	return ((chunk->isolated && chunk->nr_empty_pop_pages) ||
+		(pcpu_nr_empty_pop_pages >
+		 (PCPU_EMPTY_POP_PAGES_HIGH + chunk->nr_empty_pop_pages) &&
+		 chunk->nr_empty_pop_pages >= chunk->nr_pages / 4));
 }

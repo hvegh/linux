@@ -20,14 +20,8 @@
 
 struct led_pwm {
 	const char	*name;
-	const char	*default_trigger;
 	u8		active_low;
 	unsigned int	max_brightness;
-};
-
-struct led_pwm_platform_data {
-	int		num_leds;
-	struct led_pwm	*leds;
 };
 
 struct led_pwm_data {
@@ -61,36 +55,31 @@ static int led_pwm_set(struct led_classdev *led_cdev,
 	return pwm_apply_state(led_dat->pwm, &led_dat->pwmstate);
 }
 
+__attribute__((nonnull))
 static int led_pwm_add(struct device *dev, struct led_pwm_priv *priv,
 		       struct led_pwm *led, struct fwnode_handle *fwnode)
 {
 	struct led_pwm_data *led_data = &priv->leds[priv->num_leds];
+	struct led_init_data init_data = { .fwnode = fwnode };
 	int ret;
 
 	led_data->active_low = led->active_low;
 	led_data->cdev.name = led->name;
-	led_data->cdev.default_trigger = led->default_trigger;
 	led_data->cdev.brightness = LED_OFF;
 	led_data->cdev.max_brightness = led->max_brightness;
 	led_data->cdev.flags = LED_CORE_SUSPENDRESUME;
 
-	if (fwnode)
-		led_data->pwm = devm_fwnode_pwm_get(dev, fwnode, NULL);
-	else
-		led_data->pwm = devm_pwm_get(dev, led->name);
-	if (IS_ERR(led_data->pwm)) {
-		ret = PTR_ERR(led_data->pwm);
-		if (ret != -EPROBE_DEFER)
-			dev_err(dev, "unable to request PWM for %s: %d\n",
-				led->name, ret);
-		return ret;
-	}
+	led_data->pwm = devm_fwnode_pwm_get(dev, fwnode, NULL);
+	if (IS_ERR(led_data->pwm))
+		return dev_err_probe(dev, PTR_ERR(led_data->pwm),
+				     "unable to request PWM for %s\n",
+				     led->name);
 
 	led_data->cdev.brightness_set_blocking = led_pwm_set;
 
 	pwm_init_state(led_data->pwm, &led_data->pwmstate);
 
-	ret = devm_led_classdev_register(dev, &led_data->cdev);
+	ret = devm_led_classdev_register_ext(dev, &led_data->cdev, &init_data);
 	if (ret) {
 		dev_err(dev, "failed to register PWM led for %s: %d\n",
 			led->name, ret);
@@ -112,7 +101,7 @@ static int led_pwm_create_fwnode(struct device *dev, struct led_pwm_priv *priv)
 {
 	struct fwnode_handle *fwnode;
 	struct led_pwm led;
-	int ret = 0;
+	int ret;
 
 	memset(&led, 0, sizeof(led));
 
@@ -122,12 +111,9 @@ static int led_pwm_create_fwnode(struct device *dev, struct led_pwm_priv *priv)
 			led.name = to_of_node(fwnode)->name;
 
 		if (!led.name) {
-			fwnode_handle_put(fwnode);
-			return -EINVAL;
+			ret = EINVAL;
+			goto err_child_out;
 		}
-
-		fwnode_property_read_string(fwnode, "linux,default-trigger",
-					    &led.default_trigger);
 
 		led.active_low = fwnode_property_read_bool(fwnode,
 							   "active-low");
@@ -135,26 +121,24 @@ static int led_pwm_create_fwnode(struct device *dev, struct led_pwm_priv *priv)
 					 &led.max_brightness);
 
 		ret = led_pwm_add(dev, priv, &led, fwnode);
-		if (ret) {
-			fwnode_handle_put(fwnode);
-			break;
-		}
+		if (ret)
+			goto err_child_out;
 	}
 
+	return 0;
+
+err_child_out:
+	fwnode_handle_put(fwnode);
 	return ret;
 }
 
 static int led_pwm_probe(struct platform_device *pdev)
 {
-	struct led_pwm_platform_data *pdata = dev_get_platdata(&pdev->dev);
 	struct led_pwm_priv *priv;
-	int count, i;
 	int ret = 0;
+	int count;
 
-	if (pdata)
-		count = pdata->num_leds;
-	else
-		count = device_get_child_node_count(&pdev->dev);
+	count = device_get_child_node_count(&pdev->dev);
 
 	if (!count)
 		return -EINVAL;
@@ -164,16 +148,7 @@ static int led_pwm_probe(struct platform_device *pdev)
 	if (!priv)
 		return -ENOMEM;
 
-	if (pdata) {
-		for (i = 0; i < count; i++) {
-			ret = led_pwm_add(&pdev->dev, priv, &pdata->leds[i],
-					  NULL);
-			if (ret)
-				break;
-		}
-	} else {
-		ret = led_pwm_create_fwnode(&pdev->dev, priv);
-	}
+	ret = led_pwm_create_fwnode(&pdev->dev, priv);
 
 	if (ret)
 		return ret;

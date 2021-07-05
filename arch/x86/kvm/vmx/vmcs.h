@@ -117,6 +117,11 @@ static inline bool is_gp_fault(u32 intr_info)
 	return is_exception_n(intr_info, GP_VECTOR);
 }
 
+static inline bool is_alignment_check(u32 intr_info)
+{
+	return is_exception_n(intr_info, AC_VECTOR);
+}
+
 static inline bool is_machine_check(u32 intr_info)
 {
 	return is_exception_n(intr_info, MC_VECTOR);
@@ -138,6 +143,13 @@ static inline bool is_external_intr(u32 intr_info)
 	return is_intr_type(intr_info, INTR_TYPE_EXT_INTR);
 }
 
+static inline bool is_exception_with_error_code(u32 intr_info)
+{
+	const u32 mask = INTR_INFO_VALID_MASK | INTR_INFO_DELIVER_CODE_MASK;
+
+	return (intr_info & mask) == mask;
+}
+
 enum vmcs_field_width {
 	VMCS_FIELD_WIDTH_U16 = 0,
 	VMCS_FIELD_WIDTH_U64 = 1,
@@ -155,6 +167,14 @@ static inline int vmcs_field_width(unsigned long field)
 static inline int vmcs_field_readonly(unsigned long field)
 {
 	return (((field >> 10) & 0x3) == 1);
+}
+
+#define VMCS_FIELD_INDEX_SHIFT		(1)
+#define VMCS_FIELD_INDEX_MASK		GENMASK(9, 1)
+
+static inline unsigned int vmcs_field_index(unsigned long field)
+{
+	return (field & VMCS_FIELD_INDEX_MASK) >> VMCS_FIELD_INDEX_SHIFT;
 }
 
 #endif /* __KVM_X86_VMX_VMCS_H */

@@ -1,6 +1,5 @@
+/* SPDX-License-Identifier: MIT */
 /*
- * SPDX-License-Identifier: MIT
- *
  * Copyright © 2019 Intel Corporation
  */
 
@@ -22,8 +21,10 @@
 #include "i915_pmu.h"
 #include "i915_priolist_types.h"
 #include "i915_selftest.h"
+#include "intel_breadcrumbs_types.h"
 #include "intel_sseu.h"
 #include "intel_timeline_types.h"
+#include "intel_uncore.h"
 #include "intel_wakeref.h"
 #include "intel_workarounds_types.h"
 
@@ -66,6 +67,7 @@ typedef u8 intel_engine_mask_t;
 #define ALL_ENGINES ((intel_engine_mask_t)~0ul)
 
 struct intel_hw_status_page {
+	struct list_head timelines;
 	struct i915_vma *vma;
 	u32 *addr;
 };
@@ -176,8 +178,13 @@ struct intel_engine_execlists {
 	 * the first error interrupt, record the EIR and schedule the tasklet.
 	 * In the tasklet, we process the pending CS events to ensure we have
 	 * the guilty request, and then reset the engine.
+	 *
+	 * Low 16b are used by HW, with the upper 16b used as the enabling mask.
+	 * Reserve the upper 16b for tracking internal errors.
 	 */
 	u32 error_interrupt;
+#define ERROR_CSB	BIT(31)
+#define ERROR_PREEMPT	BIT(30)
 
 	/**
 	 * @reset_ccid: Active CCID [EXECLISTS_STATUS_HI] at the time of reset
@@ -231,16 +238,6 @@ struct intel_engine_execlists {
 	unsigned int port_mask;
 
 	/**
-	 * @switch_priority_hint: Second context priority.
-	 *
-	 * We submit multiple contexts to the HW simultaneously and would
-	 * like to occasionally switch between them to emulate timeslicing.
-	 * To know when timeslicing is suitable, we track the priority of
-	 * the context submitted second.
-	 */
-	int switch_priority_hint;
-
-	/**
 	 * @queue_priority_hint: Highest pending priority.
 	 *
 	 * When we add requests into the queue, or adjust the priority of
@@ -272,7 +269,7 @@ struct intel_engine_execlists {
 	 *
 	 * Note these register may be either mmio or HWSP shadow.
 	 */
-	u32 *csb_status;
+	u64 *csb_status;
 
 	/**
 	 * @csb_size: context status buffer FIFO size
@@ -313,6 +310,16 @@ struct intel_engine_cs {
 	u32 context_size;
 	u32 mmio_base;
 
+	/*
+	 * Some w/a require forcewake to be held (which prevents RC6) while
+	 * a particular engine is active. If so, we set fw_domain to which
+	 * domains need to be held for the duration of request activity,
+	 * and 0 if none. We try to limit the duration of the hold as much
+	 * as possible.
+	 */
+	enum forcewake_domains fw_domain;
+	unsigned int fw_active;
+
 	unsigned long context_tag;
 
 	struct rb_node uabi_node;
@@ -337,6 +344,7 @@ struct intel_engine_cs {
 	struct {
 		struct delayed_work work;
 		struct i915_request *systole;
+		unsigned long blocked;
 	} heartbeat;
 
 	unsigned long serial;
@@ -357,34 +365,8 @@ struct intel_engine_cs {
 	 */
 	struct ewma__engine_latency latency;
 
-	/* Rather than have every client wait upon all user interrupts,
-	 * with the herd waking after every interrupt and each doing the
-	 * heavyweight seqno dance, we delegate the task (of being the
-	 * bottom-half of the user interrupt) to the first client. After
-	 * every interrupt, we wake up one client, who does the heavyweight
-	 * coherent seqno read and either goes back to sleep (if incomplete),
-	 * or wakes up all the completed clients in parallel, before then
-	 * transferring the bottom-half status to the next client in the queue.
-	 *
-	 * Compared to walking the entire list of waiters in a single dedicated
-	 * bottom-half, we reduce the latency of the first waiter by avoiding
-	 * a context switch, but incur additional coherent seqno reads when
-	 * following the chain of request breadcrumbs. Since it is most likely
-	 * that we have a single client waiting on each seqno, then reducing
-	 * the overhead of waking that client is much preferred.
-	 */
-	struct intel_breadcrumbs {
-		spinlock_t irq_lock;
-		struct list_head signalers;
-
-		struct list_head signaled_requests;
-
-		struct irq_work irq_work; /* for use from inside irq_lock */
-
-		unsigned int irq_enabled;
-
-		bool irq_armed;
-	} breadcrumbs;
+	/* Keep track of all the seqno used, a trail of breadcrumbs */
+	struct intel_breadcrumbs *breadcrumbs;
 
 	struct intel_engine_pmu {
 		/**
@@ -420,6 +402,7 @@ struct intel_engine_cs {
 	u32		irq_enable_mask; /* bitmask to enable ring interrupt */
 	void		(*irq_enable)(struct intel_engine_cs *engine);
 	void		(*irq_disable)(struct intel_engine_cs *engine);
+	void		(*irq_handler)(struct intel_engine_cs *engine, u16 iir);
 
 	void		(*sanitize)(struct intel_engine_cs *engine);
 	int		(*resume)(struct intel_engine_cs *engine);
@@ -499,10 +482,9 @@ struct intel_engine_cs {
 #define I915_ENGINE_HAS_PREEMPTION   BIT(2)
 #define I915_ENGINE_HAS_SEMAPHORES   BIT(3)
 #define I915_ENGINE_HAS_TIMESLICES   BIT(4)
-#define I915_ENGINE_NEEDS_BREADCRUMB_TASKLET BIT(5)
-#define I915_ENGINE_IS_VIRTUAL       BIT(6)
-#define I915_ENGINE_HAS_RELATIVE_MMIO BIT(7)
-#define I915_ENGINE_REQUIRES_CMD_PARSER BIT(8)
+#define I915_ENGINE_IS_VIRTUAL       BIT(5)
+#define I915_ENGINE_HAS_RELATIVE_MMIO BIT(6)
+#define I915_ENGINE_REQUIRES_CMD_PARSER BIT(7)
 	unsigned int flags;
 
 	/*
@@ -533,12 +515,12 @@ struct intel_engine_cs {
 		/**
 		 * @active: Number of contexts currently scheduled in.
 		 */
-		atomic_t active;
+		unsigned int active;
 
 		/**
 		 * @lock: Lock protecting the below fields.
 		 */
-		seqlock_t lock;
+		seqcount_t lock;
 
 		/**
 		 * @total: Total time this engine was busy.
@@ -568,6 +550,8 @@ struct intel_engine_cs {
 		unsigned long stop_timeout_ms;
 		unsigned long timeslice_duration_ms;
 	} props, defaults;
+
+	I915_SELFTEST_DECLARE(struct fault_attr reset_timeout);
 };
 
 static inline bool
@@ -610,12 +594,6 @@ intel_engine_has_timeslices(const struct intel_engine_cs *engine)
 }
 
 static inline bool
-intel_engine_needs_breadcrumb_tasklet(const struct intel_engine_cs *engine)
-{
-	return engine->flags & I915_ENGINE_NEEDS_BREADCRUMB_TASKLET;
-}
-
-static inline bool
 intel_engine_is_virtual(const struct intel_engine_cs *engine)
 {
 	return engine->flags & I915_ENGINE_IS_VIRTUAL;
@@ -628,10 +606,10 @@ intel_engine_has_relative_mmio(const struct intel_engine_cs * const engine)
 }
 
 #define instdone_has_slice(dev_priv___, sseu___, slice___) \
-	((IS_GEN(dev_priv___, 7) ? 1 : ((sseu___)->slice_mask)) & BIT(slice___))
+	((GRAPHICS_VER(dev_priv___) == 7 ? 1 : ((sseu___)->slice_mask)) & BIT(slice___))
 
 #define instdone_has_subslice(dev_priv__, sseu__, slice__, subslice__) \
-	(IS_GEN(dev_priv__, 7) ? (1 & BIT(subslice__)) : \
+	(GRAPHICS_VER(dev_priv__) == 7 ? (1 & BIT(subslice__)) : \
 	 intel_sseu_has_subslice(sseu__, 0, subslice__))
 
 #define for_each_instdone_slice_subslice(dev_priv_, sseu_, slice_, subslice_) \

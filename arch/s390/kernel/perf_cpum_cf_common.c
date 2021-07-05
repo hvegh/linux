@@ -30,7 +30,6 @@ DEFINE_PER_CPU(struct cpu_cf_events, cpu_cf_events) = {
 	.alert = ATOMIC64_INIT(0),
 	.state = 0,
 	.flags = 0,
-	.txn_flags = 0,
 };
 /* Indicator whether the CPU-Measurement Counter Facility Support is ready */
 static bool cpum_cf_initalized;
@@ -168,6 +167,52 @@ static int cpum_cf_online_cpu(unsigned int cpu)
 static int cpum_cf_offline_cpu(unsigned int cpu)
 {
 	return cpum_cf_setup(cpu, PMC_RELEASE);
+}
+
+/* Return the maximum possible counter set size (in number of 8 byte counters)
+ * depending on type and model number.
+ */
+size_t cpum_cf_ctrset_size(enum cpumf_ctr_set ctrset,
+			   struct cpumf_ctr_info *info)
+{
+	size_t ctrset_size = 0;
+
+	switch (ctrset) {
+	case CPUMF_CTR_SET_BASIC:
+		if (info->cfvn >= 1)
+			ctrset_size = 6;
+		break;
+	case CPUMF_CTR_SET_USER:
+		if (info->cfvn == 1)
+			ctrset_size = 6;
+		else if (info->cfvn >= 3)
+			ctrset_size = 2;
+		break;
+	case CPUMF_CTR_SET_CRYPTO:
+		if (info->csvn >= 1 && info->csvn <= 5)
+			ctrset_size = 16;
+		else if (info->csvn == 6)
+			ctrset_size = 20;
+		break;
+	case CPUMF_CTR_SET_EXT:
+		if (info->csvn == 1)
+			ctrset_size = 32;
+		else if (info->csvn == 2)
+			ctrset_size = 48;
+		else if (info->csvn >= 3 && info->csvn <= 5)
+			ctrset_size = 128;
+		else if (info->csvn == 6)
+			ctrset_size = 160;
+		break;
+	case CPUMF_CTR_SET_MT_DIAG:
+		if (info->csvn > 3)
+			ctrset_size = 48;
+		break;
+	case CPUMF_CTR_SET_MAX:
+		break;
+	}
+
+	return ctrset_size;
 }
 
 static int __init cpum_cf_init(void)

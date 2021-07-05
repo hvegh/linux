@@ -150,6 +150,9 @@ int i2c_dw_init_regmap(struct dw_i2c_dev *dev)
 	reg = readl(dev->base + DW_IC_COMP_TYPE);
 	i2c_dw_release_lock(dev);
 
+	if ((dev->flags & MODEL_MASK) == MODEL_AMD_NAVI_GPU)
+		map_cfg.max_register = AMD_UCSI_INTR_REG;
+
 	if (reg == swab32(DW_IC_COMP_TYPE_VALUE)) {
 		map_cfg.reg_read = dw_reg_read_swab;
 		map_cfg.reg_write = dw_reg_write_swab;
@@ -286,10 +289,8 @@ int i2c_dw_acpi_configure(struct device *device)
 }
 EXPORT_SYMBOL_GPL(i2c_dw_acpi_configure);
 
-void i2c_dw_acpi_adjust_bus_speed(struct device *device)
+static u32 i2c_dw_acpi_round_bus_speed(struct device *device)
 {
-	struct dw_i2c_dev *dev = dev_get_drvdata(device);
-	struct i2c_timings *t = &dev->timings;
 	u32 acpi_speed;
 	int i;
 
@@ -300,9 +301,22 @@ void i2c_dw_acpi_adjust_bus_speed(struct device *device)
 	 */
 	for (i = 0; i < ARRAY_SIZE(supported_speeds); i++) {
 		if (acpi_speed >= supported_speeds[i])
-			break;
+			return supported_speeds[i];
 	}
-	acpi_speed = i < ARRAY_SIZE(supported_speeds) ? supported_speeds[i] : 0;
+
+	return 0;
+}
+
+#else	/* CONFIG_ACPI */
+
+static inline u32 i2c_dw_acpi_round_bus_speed(struct device *device) { return 0; }
+
+#endif	/* CONFIG_ACPI */
+
+void i2c_dw_adjust_bus_speed(struct dw_i2c_dev *dev)
+{
+	u32 acpi_speed = i2c_dw_acpi_round_bus_speed(dev->dev);
+	struct i2c_timings *t = &dev->timings;
 
 	/*
 	 * Find bus speed from the "clock-frequency" device property, ACPI
@@ -315,9 +329,7 @@ void i2c_dw_acpi_adjust_bus_speed(struct device *device)
 	else
 		t->bus_freq_hz = I2C_MAX_FAST_MODE_FREQ;
 }
-EXPORT_SYMBOL_GPL(i2c_dw_acpi_adjust_bus_speed);
-
-#endif	/* CONFIG_ACPI */
+EXPORT_SYMBOL_GPL(i2c_dw_adjust_bus_speed);
 
 u32 i2c_dw_scl_hcnt(u32 ic_clk, u32 tSYMBOL, u32 tf, int cond, int offset)
 {

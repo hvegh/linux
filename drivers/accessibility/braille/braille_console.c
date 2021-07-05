@@ -109,16 +109,16 @@ static void braille_write(u16 *buf)
 /* Follow the VC cursor*/
 static void vc_follow_cursor(struct vc_data *vc)
 {
-	vc_x = vc->vc_x - (vc->vc_x % WIDTH);
-	vc_y = vc->vc_y;
-	lastvc_x = vc->vc_x;
-	lastvc_y = vc->vc_y;
+	vc_x = vc->state.x - (vc->state.x % WIDTH);
+	vc_y = vc->state.y;
+	lastvc_x = vc->state.x;
+	lastvc_y = vc->state.y;
 }
 
 /* Maybe the VC cursor moved, if so follow it */
 static void vc_maybe_cursor_moved(struct vc_data *vc)
 {
-	if (vc->vc_x != lastvc_x || vc->vc_y != lastvc_y)
+	if (vc->state.x != lastvc_x || vc->state.y != lastvc_y)
 		vc_follow_cursor(vc);
 }
 
@@ -246,6 +246,7 @@ static int keyboard_notifier_call(struct notifier_block *blk,
 				beep(440);
 		}
 	}
+		break;
 	case KBD_UNBOUND_KEYCODE:
 	case KBD_UNICODE:
 	case KBD_KEYSYM:
@@ -290,7 +291,7 @@ static int vt_notifier_call(struct notifier_block *blk,
 			break;
 		case '\t':
 			c = ' ';
-			/* Fallthrough */
+			fallthrough;
 		default:
 			if (c < 32)
 				/* Ignore other control sequences */

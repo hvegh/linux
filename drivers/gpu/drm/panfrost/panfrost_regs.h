@@ -51,6 +51,10 @@
 #define GPU_STATUS			0x34
 #define   GPU_STATUS_PRFCNT_ACTIVE	BIT(2)
 #define GPU_LATEST_FLUSH_ID		0x38
+#define GPU_PWR_KEY			0x50	/* (WO) Power manager key register */
+#define  GPU_PWR_KEY_UNLOCK		0x2968A819
+#define GPU_PWR_OVERRIDE0		0x54	/* (RW) Power manager override settings */
+#define GPU_PWR_OVERRIDE1		0x58	/* (RW) Power manager override settings */
 #define GPU_FAULT_STATUS		0x3C
 #define GPU_FAULT_ADDRESS_LO		0x40
 #define GPU_FAULT_ADDRESS_HI		0x44
@@ -78,6 +82,7 @@
 
 #define GPU_TEXTURE_FEATURES(n)		(0x0B0 + ((n) * 4))
 #define GPU_JS_FEATURES(n)		(0x0C0 + ((n) * 4))
+#define GPU_AFBC_FEATURES		(0x4C)	/* (RO) AFBC support on Bifrost */
 
 #define GPU_SHADER_PRESENT_LO		0x100	/* (RO) Shader core present bitmap, low word */
 #define GPU_SHADER_PRESENT_HI		0x104	/* (RO) Shader core present bitmap, high word */

@@ -29,16 +29,21 @@ static void bochs_plane_update(struct bochs_device *bochs,
 			       struct drm_plane_state *state)
 {
 	struct drm_gem_vram_object *gbo;
+	s64 gpu_addr;
 
 	if (!state->fb || !bochs->stride)
 		return;
 
 	gbo = drm_gem_vram_of_gem(state->fb->obj[0]);
+	gpu_addr = drm_gem_vram_offset(gbo);
+	if (WARN_ON_ONCE(gpu_addr < 0))
+		return; /* Bug: we didn't pin the BO to VRAM in prepare_fb. */
+
 	bochs_hw_setbase(bochs,
 			 state->crtc_x,
 			 state->crtc_y,
 			 state->fb->pitches[0],
-			 state->fb->offsets[0] + gbo->bo.offset);
+			 state->fb->offsets[0] + gpu_addr);
 	bochs_hw_setformat(bochs, state->fb->format);
 }
 
@@ -52,6 +57,13 @@ static void bochs_pipe_enable(struct drm_simple_display_pipe *pipe,
 	bochs_plane_update(bochs, plane_state);
 }
 
+static void bochs_pipe_disable(struct drm_simple_display_pipe *pipe)
+{
+	struct bochs_device *bochs = pipe->crtc.dev->dev_private;
+
+	bochs_hw_blank(bochs, true);
+}
+
 static void bochs_pipe_update(struct drm_simple_display_pipe *pipe,
 			      struct drm_plane_state *old_state)
 {
@@ -62,6 +74,7 @@ static void bochs_pipe_update(struct drm_simple_display_pipe *pipe,
 
 static const struct drm_simple_display_pipe_funcs bochs_pipe_funcs = {
 	.enable	    = bochs_pipe_enable,
+	.disable    = bochs_pipe_disable,
 	.update	    = bochs_pipe_update,
 	.prepare_fb = drm_gem_vram_simple_display_pipe_prepare_fb,
 	.cleanup_fb = drm_gem_vram_simple_display_pipe_cleanup_fb,

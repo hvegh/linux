@@ -123,6 +123,7 @@ struct in_addr {
 #define IP_CHECKSUM	23
 #define IP_BIND_ADDRESS_NO_PORT	24
 #define IP_RECVFRAGSIZE	25
+#define IP_RECVERR_RFC4884	26
 
 /* IP_MTU_DISCOVER values */
 #define IP_PMTUDISC_DONT		0	/* Never send DF frames */
@@ -134,7 +135,7 @@ struct in_addr {
  * this socket to prevent accepting spoofed ones.
  */
 #define IP_PMTUDISC_INTERFACE		4
-/* weaker version of IP_PMTUDISC_INTERFACE, which allos packets to get
+/* weaker version of IP_PMTUDISC_INTERFACE, which allows packets to get
  * fragmented if they exeed the interface mtu
  */
 #define IP_PMTUDISC_OMIT		5
@@ -287,6 +288,9 @@ struct sockaddr_in {
 
 /* Address indicating an error return. */
 #define	INADDR_NONE		((unsigned long int) 0xffffffff)
+
+/* Dummy address for src of ICMP replies if no real address is set (RFC7600). */
+#define	INADDR_DUMMY		((unsigned long int) 0xc0000008)
 
 /* Network number for local host loopback. */
 #define	IN_LOOPBACKNET		127

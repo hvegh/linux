@@ -77,7 +77,6 @@ static void enable_pdm_clock(void __iomem *acp_base)
 	u32 pdm_clk_enable, pdm_ctrl;
 
 	pdm_clk_enable = ACP_PDM_CLK_FREQ_MASK;
-	pdm_ctrl = 0x00;
 
 	rn_writel(pdm_clk_enable, acp_base + ACP_WOV_CLK_CTRL);
 	pdm_ctrl = rn_readl(acp_base + ACP_WOV_MISC_CTRL);
@@ -129,7 +128,6 @@ static int start_pdm_dma(void __iomem *acp_base)
 	enable_pdm_clock(acp_base);
 	rn_writel(pdm_enable, acp_base + ACP_WOV_PDM_ENABLE);
 	rn_writel(pdm_dma_enable, acp_base + ACP_WOV_PDM_DMA_ENABLE);
-	pdm_dma_enable = 0x00;
 	timeout = 0;
 	while (++timeout < ACP_COUNTER) {
 		pdm_dma_enable = rn_readl(acp_base + ACP_WOV_PDM_DMA_ENABLE);
@@ -145,15 +143,11 @@ static int stop_pdm_dma(void __iomem *acp_base)
 	u32 pdm_enable, pdm_dma_enable;
 	int timeout;
 
-	pdm_enable = 0x00;
-	pdm_dma_enable  = 0x00;
-
 	pdm_enable = rn_readl(acp_base + ACP_WOV_PDM_ENABLE);
 	pdm_dma_enable = rn_readl(acp_base + ACP_WOV_PDM_DMA_ENABLE);
 	if (pdm_dma_enable & 0x01) {
 		pdm_dma_enable = 0x02;
 		rn_writel(pdm_dma_enable, acp_base + ACP_WOV_PDM_DMA_ENABLE);
-		pdm_dma_enable = 0x00;
 		timeout = 0;
 		while (++timeout < ACP_COUNTER) {
 			pdm_dma_enable = rn_readl(acp_base +
@@ -314,40 +308,30 @@ static int acp_pdm_dma_close(struct snd_soc_component *component,
 	return 0;
 }
 
-static int acp_pdm_dai_hw_params(struct snd_pcm_substream *substream,
-				 struct snd_pcm_hw_params *params,
-				 struct snd_soc_dai *dai)
-{
-	struct pdm_stream_instance *rtd;
-	unsigned int ch_mask;
-
-	rtd = substream->runtime->private_data;
-	switch (params_channels(params)) {
-	case TWO_CH:
-		ch_mask = 0x00;
-		break;
-	default:
-		return -EINVAL;
-	}
-	rn_writel(ch_mask, rtd->acp_base + ACP_WOV_PDM_NO_OF_CHANNELS);
-	rn_writel(PDM_DECIMATION_FACTOR, rtd->acp_base +
-		  ACP_WOV_PDM_DECIMATION_FACTOR);
-	return 0;
-}
-
 static int acp_pdm_dai_trigger(struct snd_pcm_substream *substream,
 			       int cmd, struct snd_soc_dai *dai)
 {
 	struct pdm_stream_instance *rtd;
 	int ret;
 	bool pdm_status;
+	unsigned int ch_mask;
 
 	rtd = substream->runtime->private_data;
 	ret = 0;
+	switch (substream->runtime->channels) {
+	case TWO_CH:
+		ch_mask = 0x00;
+		break;
+	default:
+		return -EINVAL;
+	}
 	switch (cmd) {
 	case SNDRV_PCM_TRIGGER_START:
 	case SNDRV_PCM_TRIGGER_RESUME:
 	case SNDRV_PCM_TRIGGER_PAUSE_RELEASE:
+		rn_writel(ch_mask, rtd->acp_base + ACP_WOV_PDM_NO_OF_CHANNELS);
+		rn_writel(PDM_DECIMATION_FACTOR, rtd->acp_base +
+			  ACP_WOV_PDM_DECIMATION_FACTOR);
 		rtd->bytescount = acp_pdm_get_byte_count(rtd,
 							 substream->stream);
 		pdm_status = check_pdm_dma_status(rtd->acp_base);
@@ -368,8 +352,7 @@ static int acp_pdm_dai_trigger(struct snd_pcm_substream *substream,
 	return ret;
 }
 
-static struct snd_soc_dai_ops acp_pdm_dai_ops = {
-	.hw_params = acp_pdm_dai_hw_params,
+static const struct snd_soc_dai_ops acp_pdm_dai_ops = {
 	.trigger   = acp_pdm_dai_trigger,
 };
 

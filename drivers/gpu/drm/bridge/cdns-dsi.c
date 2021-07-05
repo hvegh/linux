@@ -663,6 +663,7 @@ static int cdns_dsi_bridge_attach(struct drm_bridge *bridge,
 
 static enum drm_mode_status
 cdns_dsi_bridge_mode_valid(struct drm_bridge *bridge,
+			   const struct drm_display_info *info,
 			   const struct drm_display_mode *mode)
 {
 	struct cdns_dsi_input *input = bridge_to_cdns_dsi_input(bridge);
@@ -1027,7 +1028,7 @@ static ssize_t cdns_dsi_transfer(struct mipi_dsi_host *host,
 	struct mipi_dsi_packet packet;
 	int ret, i, tx_len, rx_len;
 
-	ret = pm_runtime_get_sync(host->dev);
+	ret = pm_runtime_resume_and_get(host->dev);
 	if (ret < 0)
 		return ret;
 

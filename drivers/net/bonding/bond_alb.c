@@ -104,6 +104,7 @@ static void __tlb_clear_slave(struct bonding *bond, struct slave *slave,
 		index = SLAVE_TLB_INFO(slave).head;
 		while (index != TLB_NULL_INDEX) {
 			u32 next_index = tx_hash_table[index].next;
+
 			tlb_init_table_entry(&tx_hash_table[index], save_load);
 			index = next_index;
 		}
@@ -228,7 +229,7 @@ static struct slave *tlb_choose_channel(struct bonding *bond, u32 hash_index,
 {
 	struct slave *tx_slave;
 
-	/* We don't need to disable softirq here, becase
+	/* We don't need to disable softirq here, because
 	 * tlb_choose_channel() is only called by bond_alb_xmit()
 	 * which already has softirq disabled.
 	 */
@@ -608,7 +609,7 @@ static struct slave *rlb_choose_channel(struct sk_buff *skb,
 
 		client_info->ip_src = arp->ip_src;
 		client_info->ip_dst = arp->ip_dst;
-		/* arp->mac_dst is broadcast for arp reqeusts.
+		/* arp->mac_dst is broadcast for arp requests.
 		 * will be updated with clients actual unicast mac address
 		 * upon receiving an arp reply.
 		 */
@@ -628,6 +629,7 @@ static struct slave *rlb_choose_channel(struct sk_buff *skb,
 
 		if (!client_info->assigned) {
 			u32 prev_tbl_head = bond_info->rx_hashtbl_used_head;
+
 			bond_info->rx_hashtbl_used_head = hash_index;
 			client_info->used_next = prev_tbl_head;
 			if (prev_tbl_head != RLB_NULL_INDEX) {
@@ -830,9 +832,10 @@ static void rlb_purge_src_ip(struct bonding *bond, struct arp_pkt *arp)
 	while (index != RLB_NULL_INDEX) {
 		struct rlb_client_info *entry = &(bond_info->rx_hashtbl[index]);
 		u32 next_index = entry->src_next;
+
 		if (entry->ip_src == arp->ip_src &&
 		    !ether_addr_equal_64bits(arp->mac_src, entry->mac_src))
-				rlb_delete_table_entry(bond, index);
+			rlb_delete_table_entry(bond, index);
 		index = next_index;
 	}
 	spin_unlock_bh(&bond->mode_lock);
@@ -942,9 +945,10 @@ struct alb_walk_data {
 	bool strict_match;
 };
 
-static int alb_upper_dev_walk(struct net_device *upper, void *_data)
+static int alb_upper_dev_walk(struct net_device *upper,
+			      struct netdev_nested_priv *priv)
 {
-	struct alb_walk_data *data = _data;
+	struct alb_walk_data *data = (struct alb_walk_data *)priv->data;
 	bool strict_match = data->strict_match;
 	struct bonding *bond = data->bond;
 	struct slave *slave = data->slave;
@@ -983,6 +987,7 @@ static void alb_send_learning_packets(struct slave *slave, u8 mac_addr[],
 				      bool strict_match)
 {
 	struct bonding *bond = bond_get_bond_by_slave(slave);
+	struct netdev_nested_priv priv;
 	struct alb_walk_data data = {
 		.strict_match = strict_match,
 		.mac_addr = mac_addr,
@@ -990,6 +995,7 @@ static void alb_send_learning_packets(struct slave *slave, u8 mac_addr[],
 		.bond = bond,
 	};
 
+	priv.data = (void *)&data;
 	/* send untagged */
 	alb_send_lp_vid(slave, mac_addr, 0, 0);
 
@@ -997,7 +1003,7 @@ static void alb_send_learning_packets(struct slave *slave, u8 mac_addr[],
 	 * for that device.
 	 */
 	rcu_read_lock();
-	netdev_walk_all_upper_dev_rcu(bond->dev, alb_upper_dev_walk, &data);
+	netdev_walk_all_upper_dev_rcu(bond->dev, alb_upper_dev_walk, &priv);
 	rcu_read_unlock();
 }
 
@@ -1095,7 +1101,7 @@ static void alb_fasten_mac_swap(struct bonding *bond, struct slave *slave1,
  * If @slave's permanent hw address is different both from its current
  * address and from @bond's address, then somewhere in the bond there's
  * a slave that has @slave's permanet address as its current address.
- * We'll make sure that that slave no longer uses @slave's permanent address.
+ * We'll make sure that slave no longer uses @slave's permanent address.
  *
  * Caller must hold RTNL and no other locks
  */
@@ -1206,8 +1212,8 @@ static int alb_handle_addr_collision_on_attach(struct bonding *bond, struct slav
 
 /**
  * alb_set_mac_address
- * @bond:
- * @addr:
+ * @bond: bonding we're working on
+ * @addr: MAC address to set
  *
  * In TLB mode all slaves are configured to the bond's hw address, but set
  * their dev_addr field to different addresses (based on their permanent hw
@@ -1265,7 +1271,7 @@ unwind:
 	return res;
 }
 
-/************************ exported alb funcions ************************/
+/************************ exported alb functions ************************/
 
 int bond_alb_initialize(struct bonding *bond, int rlb_enabled)
 {
@@ -1544,7 +1550,7 @@ void bond_alb_monitor(struct work_struct *work)
 
 		bond_for_each_slave_rcu(bond, slave, iter) {
 			/* If updating current_active, use all currently
-			 * user mac addreses (!strict_match).  Otherwise, only
+			 * user mac addresses (!strict_match).  Otherwise, only
 			 * use mac of the slave device.
 			 * In RLB mode, we always use strict matches.
 			 */

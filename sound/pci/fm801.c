@@ -26,8 +26,6 @@
 MODULE_AUTHOR("Jaroslav Kysela <perex@perex.cz>");
 MODULE_DESCRIPTION("ForteMedia FM801");
 MODULE_LICENSE("GPL");
-MODULE_SUPPORTED_DEVICE("{{ForteMedia,FM801},"
-		"{Genius,SoundMaker Live 5.1}}");
 
 static int index[SNDRV_CARDS] = SNDRV_DEFAULT_IDX;	/* Index 0-MAX */
 static char *id[SNDRV_CARDS] = SNDRV_DEFAULT_STR;	/* ID for this card */
@@ -144,6 +142,8 @@ MODULE_PARM_DESC(radio_nr, "Radio device numbers");
 	
 /**
  * struct fm801 - describes FM801 chip
+ * @dev:		device for this chio
+ * @irq:		irq number
  * @port:		I/O port number
  * @multichannel:	multichannel support
  * @secondary:		secondary codec
@@ -151,6 +151,31 @@ MODULE_PARM_DESC(radio_nr, "Radio device numbers");
  * @tea575x_tuner:	tuner access method & flags
  * @ply_ctrl:		playback control
  * @cap_ctrl:		capture control
+ * @ply_buffer:		playback buffer
+ * @ply_buf:		playback buffer index
+ * @ply_count:		playback buffer count
+ * @ply_size:		playback buffer size
+ * @ply_pos:		playback position
+ * @cap_buffer:		capture buffer
+ * @cap_buf:		capture buffer index
+ * @cap_count:		capture buffer count
+ * @cap_size:		capture buffer size
+ * @cap_pos:		capture position
+ * @ac97_bus:		ac97 bus handle
+ * @ac97:		ac97 handle
+ * @ac97_sec:		ac97 secondary handle
+ * @card:		ALSA card
+ * @pcm:		PCM devices
+ * @rmidi:		rmidi device
+ * @playback_substream:	substream for playback
+ * @capture_substream:	substream for capture
+ * @p_dma_size:		playback DMA size
+ * @c_dma_size:		capture DMA size
+ * @reg_lock:		lock
+ * @proc_entry:		/proc entry
+ * @v4l2_dev:		v4l2 device
+ * @tea:		tea575a structure
+ * @saved_regs:		context saved during suspend
  */
 struct fm801 {
 	struct device *dev;
@@ -634,7 +659,8 @@ static int snd_fm801_playback_open(struct snd_pcm_substream *substream)
 					   SNDRV_PCM_HW_PARAM_CHANNELS,
 					   &hw_constraints_channels);
 	}
-	if ((err = snd_pcm_hw_constraint_integer(runtime, SNDRV_PCM_HW_PARAM_PERIODS)) < 0)
+	err = snd_pcm_hw_constraint_integer(runtime, SNDRV_PCM_HW_PARAM_PERIODS);
+	if (err < 0)
 		return err;
 	return 0;
 }
@@ -649,7 +675,8 @@ static int snd_fm801_capture_open(struct snd_pcm_substream *substream)
 	runtime->hw = snd_fm801_capture;
 	snd_pcm_hw_constraint_list(runtime, 0, SNDRV_PCM_HW_PARAM_RATE,
 				   &hw_constraints_rates);
-	if ((err = snd_pcm_hw_constraint_integer(runtime, SNDRV_PCM_HW_PARAM_PERIODS)) < 0)
+	err = snd_pcm_hw_constraint_integer(runtime, SNDRV_PCM_HW_PARAM_PERIODS);
+	if (err < 0)
 		return err;
 	return 0;
 }
@@ -692,7 +719,8 @@ static int snd_fm801_pcm(struct fm801 *chip, int device)
 	struct snd_pcm *pcm;
 	int err;
 
-	if ((err = snd_pcm_new(chip->card, "FM801", device, 1, 1, &pcm)) < 0)
+	err = snd_pcm_new(chip->card, "FM801", device, 1, 1, &pcm);
+	if (err < 0)
 		return err;
 
 	snd_pcm_set_ops(pcm, SNDRV_PCM_STREAM_PLAYBACK, &snd_fm801_playback_ops);
@@ -960,7 +988,8 @@ static int snd_fm801_put_mux(struct snd_kcontrol *kcontrol,
 	struct fm801 *chip = snd_kcontrol_chip(kcontrol);
         unsigned short val;
  
-        if ((val = ucontrol->value.enumerated.item[0]) > 4)
+	val = ucontrol->value.enumerated.item[0];
+	if (val > 4)
                 return -EINVAL;
 	return snd_fm801_update_bits(chip, FM801_REC_SRC, 7, val);
 }
@@ -1025,19 +1054,22 @@ static int snd_fm801_mixer(struct fm801 *chip)
 		.read = snd_fm801_codec_read,
 	};
 
-	if ((err = snd_ac97_bus(chip->card, 0, &ops, chip, &chip->ac97_bus)) < 0)
+	err = snd_ac97_bus(chip->card, 0, &ops, chip, &chip->ac97_bus);
+	if (err < 0)
 		return err;
 	chip->ac97_bus->private_free = snd_fm801_mixer_free_ac97_bus;
 
 	memset(&ac97, 0, sizeof(ac97));
 	ac97.private_data = chip;
 	ac97.private_free = snd_fm801_mixer_free_ac97;
-	if ((err = snd_ac97_mixer(chip->ac97_bus, &ac97, &chip->ac97)) < 0)
+	err = snd_ac97_mixer(chip->ac97_bus, &ac97, &chip->ac97);
+	if (err < 0)
 		return err;
 	if (chip->secondary) {
 		ac97.num = 1;
 		ac97.addr = chip->secondary_addr;
-		if ((err = snd_ac97_mixer(chip->ac97_bus, &ac97, &chip->ac97_sec)) < 0)
+		err = snd_ac97_mixer(chip->ac97_bus, &ac97, &chip->ac97_sec);
+		if (err < 0)
 			return err;
 	}
 	for (i = 0; i < FM801_CONTROLS; i++) {
@@ -1188,7 +1220,8 @@ static int snd_fm801_create(struct snd_card *card,
 	};
 
 	*rchip = NULL;
-	if ((err = pcim_enable_device(pci)) < 0)
+	err = pcim_enable_device(pci);
+	if (err < 0)
 		return err;
 	chip = devm_kzalloc(&pci->dev, sizeof(*chip), GFP_KERNEL);
 	if (chip == NULL)
@@ -1198,7 +1231,8 @@ static int snd_fm801_create(struct snd_card *card,
 	chip->dev = &pci->dev;
 	chip->irq = -1;
 	chip->tea575x_tuner = tea575x_tuner;
-	if ((err = pci_request_regions(pci, "FM801")) < 0)
+	err = pci_request_regions(pci, "FM801");
+	if (err < 0)
 		return err;
 	chip->port = pci_resource_start(pci, 0);
 
@@ -1229,7 +1263,8 @@ static int snd_fm801_create(struct snd_card *card,
 
 	snd_fm801_chip_init(chip);
 
-	if ((err = snd_device_new(card, SNDRV_DEV_LOWLEVEL, chip, &ops)) < 0) {
+	err = snd_device_new(card, SNDRV_DEV_LOWLEVEL, chip, &ops);
+	if (err < 0) {
 		snd_fm801_free(chip);
 		return err;
 	}
@@ -1273,7 +1308,7 @@ static int snd_fm801_create(struct snd_card *card,
 		chip->tea575x_tuner |= tuner_only;
 	}
 	if (!(chip->tea575x_tuner & TUNER_DISABLED)) {
-		strlcpy(chip->tea.card, get_tea575x_gpio(chip)->name,
+		strscpy(chip->tea.card, get_tea575x_gpio(chip)->name,
 			sizeof(chip->tea.card));
 	}
 #endif
@@ -1302,7 +1337,8 @@ static int snd_card_fm801_probe(struct pci_dev *pci,
 			   0, &card);
 	if (err < 0)
 		return err;
-	if ((err = snd_fm801_create(card, pci, tea575x_tuner[dev], radio_nr[dev], &chip)) < 0) {
+	err = snd_fm801_create(card, pci, tea575x_tuner[dev], radio_nr[dev], &chip);
+	if (err < 0) {
 		snd_card_free(card);
 		return err;
 	}
@@ -1317,35 +1353,41 @@ static int snd_card_fm801_probe(struct pci_dev *pci,
 	if (chip->tea575x_tuner & TUNER_ONLY)
 		goto __fm801_tuner_only;
 
-	if ((err = snd_fm801_pcm(chip, 0)) < 0) {
+	err = snd_fm801_pcm(chip, 0);
+	if (err < 0) {
 		snd_card_free(card);
 		return err;
 	}
-	if ((err = snd_fm801_mixer(chip)) < 0) {
+	err = snd_fm801_mixer(chip);
+	if (err < 0) {
 		snd_card_free(card);
 		return err;
 	}
-	if ((err = snd_mpu401_uart_new(card, 0, MPU401_HW_FM801,
-				       chip->port + FM801_MPU401_DATA,
-				       MPU401_INFO_INTEGRATED |
-				       MPU401_INFO_IRQ_HOOK,
-				       -1, &chip->rmidi)) < 0) {
+	err = snd_mpu401_uart_new(card, 0, MPU401_HW_FM801,
+				  chip->port + FM801_MPU401_DATA,
+				  MPU401_INFO_INTEGRATED |
+				  MPU401_INFO_IRQ_HOOK,
+				  -1, &chip->rmidi);
+	if (err < 0) {
 		snd_card_free(card);
 		return err;
 	}
-	if ((err = snd_opl3_create(card, chip->port + FM801_OPL3_BANK0,
-				   chip->port + FM801_OPL3_BANK1,
-				   OPL3_HW_OPL3_FM801, 1, &opl3)) < 0) {
+	err = snd_opl3_create(card, chip->port + FM801_OPL3_BANK0,
+			      chip->port + FM801_OPL3_BANK1,
+			      OPL3_HW_OPL3_FM801, 1, &opl3);
+	if (err < 0) {
 		snd_card_free(card);
 		return err;
 	}
-	if ((err = snd_opl3_hwdep_new(opl3, 0, 1, NULL)) < 0) {
+	err = snd_opl3_hwdep_new(opl3, 0, 1, NULL);
+	if (err < 0) {
 		snd_card_free(card);
 		return err;
 	}
 
       __fm801_tuner_only:
-	if ((err = snd_card_register(card)) < 0) {
+	err = snd_card_register(card);
+	if (err < 0) {
 		snd_card_free(card);
 		return err;
 	}

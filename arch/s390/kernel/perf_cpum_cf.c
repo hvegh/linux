@@ -230,9 +230,7 @@ static int __hw_perf_event_init(struct perf_event *event, unsigned int type)
 		/* No support for kernel space counters only */
 		} else if (!attr->exclude_kernel && attr->exclude_user) {
 			return -EOPNOTSUPP;
-
-		/* Count user and kernel space */
-		} else {
+		} else {	/* Count user and kernel space */
 			if (ev >= ARRAY_SIZE(cpumf_generic_events_basic))
 				return -EOPNOTSUPP;
 			ev = cpumf_generic_events_basic[ev];
@@ -269,7 +267,7 @@ static int __hw_perf_event_init(struct perf_event *event, unsigned int type)
 	case CPUMF_CTR_SET_MAX:
 		/* The counter could not be associated to a counter set */
 		return -EINVAL;
-	};
+	}
 
 	/* Initialize for using the CPU-measurement counter facility */
 	if (!atomic_inc_not_zero(&num_events)) {
@@ -364,14 +362,8 @@ static void cpumf_pmu_start(struct perf_event *event, int flags)
 	struct cpu_cf_events *cpuhw = this_cpu_ptr(&cpu_cf_events);
 	struct hw_perf_event *hwc = &event->hw;
 
-	if (WARN_ON_ONCE(!(hwc->state & PERF_HES_STOPPED)))
+	if (!(hwc->state & PERF_HES_STOPPED))
 		return;
-
-	if (WARN_ON_ONCE(hwc->config == -1))
-		return;
-
-	if (flags & PERF_EF_RELOAD)
-		WARN_ON_ONCE(!(hwc->state & PERF_HES_UPTODATE));
 
 	hwc->state = 0;
 
@@ -402,12 +394,12 @@ static void cpumf_pmu_stop(struct perf_event *event, int flags)
 		 */
 		if (!atomic_dec_return(&cpuhw->ctr_set[hwc->config_base]))
 			ctr_set_stop(&cpuhw->state, hwc->config_base);
-		event->hw.state |= PERF_HES_STOPPED;
+		hwc->state |= PERF_HES_STOPPED;
 	}
 
 	if ((flags & PERF_EF_UPDATE) && !(hwc->state & PERF_HES_UPTODATE)) {
 		hw_perf_event_update(event);
-		event->hw.state |= PERF_HES_UPTODATE;
+		hwc->state |= PERF_HES_UPTODATE;
 	}
 }
 
@@ -415,22 +407,11 @@ static int cpumf_pmu_add(struct perf_event *event, int flags)
 {
 	struct cpu_cf_events *cpuhw = this_cpu_ptr(&cpu_cf_events);
 
-	/* Check authorization for the counter set to which this
-	 * counter belongs.
-	 * For group events transaction, the authorization check is
-	 * done in cpumf_pmu_commit_txn().
-	 */
-	if (!(cpuhw->txn_flags & PERF_PMU_TXN_ADD))
-		if (validate_ctr_auth(&event->hw))
-			return -ENOENT;
-
 	ctr_set_enable(&cpuhw->state, event->hw.config_base);
 	event->hw.state = PERF_HES_UPTODATE | PERF_HES_STOPPED;
 
 	if (flags & PERF_EF_START)
 		cpumf_pmu_start(event, PERF_EF_RELOAD);
-
-	perf_event_update_userpage(event);
 
 	return 0;
 }
@@ -451,80 +432,6 @@ static void cpumf_pmu_del(struct perf_event *event, int flags)
 	 */
 	if (!atomic_read(&cpuhw->ctr_set[event->hw.config_base]))
 		ctr_set_disable(&cpuhw->state, event->hw.config_base);
-
-	perf_event_update_userpage(event);
-}
-
-/*
- * Start group events scheduling transaction.
- * Set flags to perform a single test at commit time.
- *
- * We only support PERF_PMU_TXN_ADD transactions. Save the
- * transaction flags but otherwise ignore non-PERF_PMU_TXN_ADD
- * transactions.
- */
-static void cpumf_pmu_start_txn(struct pmu *pmu, unsigned int txn_flags)
-{
-	struct cpu_cf_events *cpuhw = this_cpu_ptr(&cpu_cf_events);
-
-	WARN_ON_ONCE(cpuhw->txn_flags);		/* txn already in flight */
-
-	cpuhw->txn_flags = txn_flags;
-	if (txn_flags & ~PERF_PMU_TXN_ADD)
-		return;
-
-	perf_pmu_disable(pmu);
-	cpuhw->tx_state = cpuhw->state;
-}
-
-/*
- * Stop and cancel a group events scheduling tranctions.
- * Assumes cpumf_pmu_del() is called for each successful added
- * cpumf_pmu_add() during the transaction.
- */
-static void cpumf_pmu_cancel_txn(struct pmu *pmu)
-{
-	unsigned int txn_flags;
-	struct cpu_cf_events *cpuhw = this_cpu_ptr(&cpu_cf_events);
-
-	WARN_ON_ONCE(!cpuhw->txn_flags);	/* no txn in flight */
-
-	txn_flags = cpuhw->txn_flags;
-	cpuhw->txn_flags = 0;
-	if (txn_flags & ~PERF_PMU_TXN_ADD)
-		return;
-
-	WARN_ON(cpuhw->tx_state != cpuhw->state);
-
-	perf_pmu_enable(pmu);
-}
-
-/*
- * Commit the group events scheduling transaction.  On success, the
- * transaction is closed.   On error, the transaction is kept open
- * until cpumf_pmu_cancel_txn() is called.
- */
-static int cpumf_pmu_commit_txn(struct pmu *pmu)
-{
-	struct cpu_cf_events *cpuhw = this_cpu_ptr(&cpu_cf_events);
-	u64 state;
-
-	WARN_ON_ONCE(!cpuhw->txn_flags);	/* no txn in flight */
-
-	if (cpuhw->txn_flags & ~PERF_PMU_TXN_ADD) {
-		cpuhw->txn_flags = 0;
-		return 0;
-	}
-
-	/* check if the updated state can be scheduled */
-	state = cpuhw->state & ~((1 << CPUMF_LCCTL_ENABLE_SHIFT) - 1);
-	state >>= CPUMF_LCCTL_ENABLE_SHIFT;
-	if ((state & cpuhw->info.auth_ctl) != state)
-		return -ENOENT;
-
-	cpuhw->txn_flags = 0;
-	perf_pmu_enable(pmu);
-	return 0;
 }
 
 /* Performance monitoring unit for s390x */
@@ -539,9 +446,6 @@ static struct pmu cpumf_pmu = {
 	.start	      = cpumf_pmu_start,
 	.stop	      = cpumf_pmu_stop,
 	.read	      = cpumf_pmu_read,
-	.start_txn    = cpumf_pmu_start_txn,
-	.commit_txn   = cpumf_pmu_commit_txn,
-	.cancel_txn   = cpumf_pmu_cancel_txn,
 };
 
 static int __init cpumf_pmu_init(void)
