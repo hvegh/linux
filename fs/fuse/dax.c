@@ -213,7 +213,7 @@ static int fuse_setup_one_mapping(struct inode *inode, unsigned long start_idx,
 	dmap->writable = writable;
 	if (!upgrade) {
 		/*
-		 * We don't take a refernce on inode. inode is valid right now
+		 * We don't take a reference on inode. inode is valid right now
 		 * and when inode is going away, cleanup logic should first
 		 * cleanup dmap entries.
 		 */
@@ -622,7 +622,7 @@ static int fuse_iomap_begin(struct inode *inode, loff_t pos, loff_t length,
 	}
 
 	/*
-	 * If read beyond end of file happnes, fs code seems to return
+	 * If read beyond end of file happens, fs code seems to return
 	 * it as hole
 	 */
 iomap_hole:
@@ -1207,7 +1207,7 @@ static void fuse_dax_free_mem_worker(struct work_struct *work)
 			 ret);
 	}
 
-	/* If number of free ranges are still below threhold, requeue */
+	/* If number of free ranges are still below threshold, requeue */
 	kick_dmap_free_worker(fcd, 1);
 }
 
@@ -1235,8 +1235,6 @@ void fuse_dax_conn_free(struct fuse_conn *fc)
 static int fuse_dax_mem_range_init(struct fuse_conn_dax *fcd)
 {
 	long nr_pages, nr_ranges;
-	void *kaddr;
-	pfn_t pfn;
 	struct fuse_dax_mapping *range;
 	int ret, id;
 	size_t dax_size = -1;
@@ -1248,8 +1246,8 @@ static int fuse_dax_mem_range_init(struct fuse_conn_dax *fcd)
 	INIT_DELAYED_WORK(&fcd->free_work, fuse_dax_free_mem_worker);
 
 	id = dax_read_lock();
-	nr_pages = dax_direct_access(fcd->dev, 0, PHYS_PFN(dax_size), &kaddr,
-				     &pfn);
+	nr_pages = dax_direct_access(fcd->dev, 0, PHYS_PFN(dax_size), NULL,
+				     NULL);
 	dax_read_unlock(id);
 	if (nr_pages < 0) {
 		pr_debug("dax_direct_access() returned %ld\n", nr_pages);

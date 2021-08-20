@@ -183,6 +183,8 @@ struct dc_caps {
 	unsigned int cursor_cache_size;
 	struct dc_plane_cap planes[MAX_PLANES];
 	struct dc_color_caps color;
+	bool vbios_lttpr_aware;
+	bool vbios_lttpr_enable;
 };
 
 struct dc_bug_wa {
@@ -297,6 +299,7 @@ struct dc_config {
 	bool allow_seamless_boot_optimization;
 	bool power_down_display_on_boot;
 	bool edp_not_connected;
+	bool edp_no_power_sequencing;
 	bool force_enum_edp;
 	bool forced_clocks;
 	bool allow_lttpr_non_transparent_mode;
@@ -353,10 +356,10 @@ enum dcn_pwr_state {
 };
 
 #if defined(CONFIG_DRM_AMD_DC_DCN)
-enum dcn_z9_support_state {
-	DCN_Z9_SUPPORT_UNKNOWN,
-	DCN_Z9_SUPPORT_ALLOW,
-	DCN_Z9_SUPPORT_DISALLOW,
+enum dcn_zstate_support_state {
+	DCN_ZSTATE_SUPPORT_UNKNOWN,
+	DCN_ZSTATE_SUPPORT_ALLOW,
+	DCN_ZSTATE_SUPPORT_DISALLOW,
 };
 #endif
 /*
@@ -377,7 +380,7 @@ struct dc_clocks {
 	int dramclk_khz;
 	bool p_state_change_support;
 #if defined(CONFIG_DRM_AMD_DC_DCN)
-	enum dcn_z9_support_state z9_support;
+	enum dcn_zstate_support_state zstate_support;
 	bool dtbclk_en;
 #endif
 	enum dcn_pwr_state pwr_state;
